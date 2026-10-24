@@ -15,15 +15,17 @@ Membangun platform simulasi ujian klinik 3D berbasis web untuk persiapan **OSCE 
 
 ## 2. Arsitektur Teknis & Tech Stack
 
-* **Bundler & Dev Server:** Vite + TypeScript (berjalan di port standar `5173`)[cite: 1].
-* **3D Rendering Engine:** Three.js (Modular ES6) atau React Three Fiber (R3F) + `@react-three/drei`.
-* **State Management:** Zustand / Vanilla Reactive Store (mengelola State Machine ujian, timer stasiun, progres 10 rotasi, dan skor rubrik).
-* **UI & HUD Layer:** Tailwind CSS (HTML DOM Overlay terpisah dari WebGL Canvas untuk ketajaman teks)[cite: 1, 2].
+> **Catatan realisasi:** rencana awal Vite + vanilla dijalankan sebagai **Nuxt 4 (SPA) + Pinia + Three.js r186** — sudah stabil dan dipilih dipertahankan. State 'Zustand' direalisasikan Pinia. Aset furnitur medis dari **Innerscene CC0** (`public/models`, dikompres `gltfpack -cc`); prop obat spesifik dibuat **prosedural + CanvasTexture** (generator AI/MCP tidak dipakai karena tidak ada MCP server tersedia saat pengerjaan).
+
+* **Framework & Dev Server:** Nuxt 4 (SPA, `ssr: false`), dev server `127.0.0.1:5173`.
+* **3D Rendering Engine:** Three.js (Modular ES6) — PointerLockControls, GLTFLoader, InstancedMesh, GSAP.
+* **State Management:** Pinia (`app/stores/osce.ts` — FSM ujian, timer, rotasi 10 stasiun, skor rubrik).
+* **UI & HUD Layer:** Tailwind CSS v4 (HTML DOM Overlay terpisah dari WebGL Canvas untuk ketajaman teks).
 * **3D Asset Pipeline:**
-  * Arsitektur & Furnitur: Modular Low-Poly CC0 (Kenney / Quaternius).
-  * Prop Medis Spesifik: AI 3D Generator via MCP (Hugging Face Trellis / TripoSR / Blender MCP).
-  * Optimasi: `gltf-transform` / `gltfpack` (Draco / Meshopt + KTX2 Texture Atlas).
-* **Audio Engine:** Web Audio API Synthesizer + Lightweight `.mp3`/`.ogg` untuk bel stasiun dan efek interaksi.
+  * Furnitur medis ruangan: Innerscene CC0 (meja periksa, monitor tanda vital).
+  * Prop medis spesifik: geometri prosedural + `CanvasTexture` (bukan file .glb).
+  * Optimasi: `npx gltfpack -i in.glb -o out.glb -cc`.
+* **Audio Engine:** Web Audio API Synthesizer (bel, pintu, kertas, langkah tindakan) + ambience rumah sakit + mute global.
 
 ---
 

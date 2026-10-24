@@ -1,83 +1,40 @@
-## Fase 1: Project Scaffolding & Core Setup
+# TASK.md — status realisasi (disinkronkan dengan kode, Okt 2026)
 
-- [ ] **1.1. Inisialisasi Vite + TypeScript:**
-  - Buat proyek baru Vite di port `5173` (`vite.config.ts` -> `server: { host: '127.0.0.1', port: 5173 }`)[cite: 1].
-  - Install dependencies utama: `three`, `@types/three`, `zustand`, `tailwindcss`, `lucide-react` (atau icon set), dan `gsap` (untuk animasi kamera/pintu yang mulus).
-- [ ] **1.2. Struktur Direktori Modular:**
-  - Buat struktur folder:
-    - `src/core/` (SceneManager, Renderer, CameraController, Raycaster, AudioEngine)
-    - `src/world/` (CorridorBuilder, StationRoomBuilder, DoorManager, InstancedProps)
-    - `src/state/` (useOsceStore.ts - FSM ujian, timer, skor, rotasi 10 stasiun)
-    - `src/data/` (stationsData.ts - JSON schema untuk Station 01 s/d Station 10)
-    - `src/ui/` (HUD overlay, StationCard, RotationGrid, DocumentModal, EvaluationModal)
-    - `public/models/` (Tempat menyimpan aset `.glb` terkompresi)
+> Kode dijalankan di **Nuxt 4 + Pinia + Three.js** (bukan Vite vanilla — lihat PRD §2 catatan realisasi).
+> Semua item di bawah sudah direalisasi dalam struktur Nuxt: `app/game/`, `app/stores/`, `app/data/`, `app/components/`, `app/pages/`.
 
----
+## Fase 1: Project Scaffolding & Core Setup — ✅ selesai
 
-## Fase 2: State Machine & Data Skenario 10 Stasiun
+- [x] **1.1.** Nuxt 4 (SPA, ssr:false) di `127.0.0.1:5173`; deps: `three`, `gsap`, `pinia`, `tailwindcss`, `@lucide/vue`, `@nuxt/fonts`.
+- [x] **1.2.** Struktur modular (Nuxt): `app/game/` (engine, audio, textures), `app/stores/osce.ts`, `app/data/stations.ts`, `app/components/`, `app/pages/`, `public/models/`.
 
-- [ ] **2.1. Implementasi Store Ujian (`useOsceStore`):**
-  - Buat state: `activeStationId` (`01` s/d `10`), `phase` (`READING` | `EXAM` | `COMPLETED`), `timeLeft`, `completedStations` (`string[]`), `mode` (`LATIHAN` | `UJIAN`), dan `rubricScores`[cite: 1, 2].
-  - Buat action: `startReadingPhase()`, `skipReadingTime()`, `unlockAndOpenDoor()`, `completeStation()`, `selectStation(id)`[cite: 1, 2].
-- [ ] **2.2. Penyusunan Data 10 Stasiun (`stationsData.ts`):**
-  - Isi penuh skenario medis untuk 10 stasiun OSCE Apoteker:
-    - **Station 01:** Konseling Informasi dan Edukasi resep pasien Diabetes Melitus (Glimepiride & Metformin)[cite: 1, 2].
-    - **Station 02:** Konseling penggunaan alat khusus (Inhaler Asma / Turbuhaler).
-    - **Station 03:** Pelayanan Swamedikasi (Diare Anak / Konstipasi / Dyspepsia).
-    - **Station 04:** Skrining Resep & Penyelesaian Masalah Klinis (Interaksi Obat Hipertensi + Kolesterol).
-    - **Station 05:** Konseling Penggunaan Insulin Pen & Penanganan Hipoglikemia.
-    - **Station 06 - 10:** Compounding/Peracikan, Monitoring Efek Samping Obat (MESO), Pengelolaan Cold Chain (Vaksin), Antibiotik Pediatri, dan Konseling Ibu Hamil/Menyusui.
+## Fase 2: State Machine & Data Skenario 10 Stasiun — ✅ selesai
 
----
+- [x] **2.1.** `useOsceStore`: mode (LATIHAN|SIMULASI), phase (`lobby|reading|exam|rekap`), timer, `checkedItems`, `completed`, `stepProgress`, `wrongSteps`, aksi `startReadingPhase/skipReadingTime/enterRoom/tick/completeStation/toggleRubricItem/autoCheckCategory/recordStep/reset`, persist localStorage (`osce-progress-v1`).
+- [x] **2.2.** Konten medis 10 stasiun selevel penting: Station 01 penuh (10 butir); 02–10 skenario + rubrik ringkas (6–10 butir) + dokumen/prop: diare anak (03), skrining resep interaksi (04), inhaler (02), insulin pen (05), peracikan (06), MESO (07), cold chain (08), rekonstitusi (09), ibu hamil/menyusui (10).
+  - shortcut: konten stasiun 02–10 masih draft klinik standar — perlu validasi tenaga farmasi sebelum dipakai pelatihan resmi.
 
-## Fase 3: Pembangunan Dunia 3D & Optimasi Koridor
+## Fase 3: Pembangunan Dunia 3D & Optimasi Koridor — ✅ selesai
 
-- [ ] **3.1. Koridor Modular & `InstancedMesh`:**
-  - Bangun geometri koridor rumah sakit dengan lantai reflektif halus, dinding berpanel, lampu plafon LED, dan backdrop resepsionis **UKAI Labs OSCE Center** di ujung lorong[cite: 1].
-  - Gunakan `THREE.InstancedMesh` untuk me-render deretan kursi tunggu biru di sepanjang kiri-kanan lorong dalam 1 *draw call*[cite: 1].
-- [ ] **3.2. Sistem 10 Pintu, Plang Stasiun, & Papan Klip Dinding:**
-  - Buat 10 kusen dan daun pintu dengan pivot engsel yang akurat[cite: 1, 2].
-  - Pasang plang gantung ungu dua sisi (`STATION 01 | 01` s/d `STATION 10 | 10`) di atas masing-masing pintu[cite: 1, 2].
-  - Pasang papan klip (*clipboard*) skenario di dinding sebelah pintu untuk setiap stasiun[cite: 1, 2].
-- [ ] **3.3. First-Person Controller & Collision System:**
-  - Implementasikan jalan `WASD / Arrow Keys` dan rotasi kamera `PointerLockControls` + fallback drag mouse[cite: 1, 2].
-  - Tambahkan *AABB Collision Detection* untuk batas dinding koridor, kursi tunggu, dan penghalang pintu saat masih berstatus `Terkunci`[cite: 1, 2].
+- [x] **3.1.** Koridor (lantai, dinding segmen bertirai celah pintu, plafon, LED strip, backdrop UKAI Labs); kursi tunggu `InstancedMesh` (2 draw call) **dengan collider AABB**.
+- [x] **3.2.** 10 pintu kusen + daun pivot engsel (gsap swing), plang ungu dua sisi, papan klip skenario interaktif per pintu; **pintu tertutup kini penghalang fisik** (AABB di celah dinding).
+- [x] **3.3.** First-person controller (WASD/panah, PointerLockControls + drag fallback), collision AABB (koridor + ruangan + kursi + pintu tertutup).
 
----
+## Fase 4: Interior Ruangan, Kertas 3D, Aset — ✅ selesai (dengan koreksi jalur)
 
-## Fase 4: Interior Ruangan, Kertas 3D, & Integrasi Aset (MCP)
+- [x] **4.1.** Lazy room spawn per stasiun aktif (spawn saat masuk exam / teleport, auto-dispose + free geometri/tekstur saat pindah).
+- [x] **4.2.** CanvasTexture generator + raycast reticle reset/klik (< 4.5 m) dengan highlight tooltip.
+- [x] **4.3. (koreksi jalur)** Innerscene CC0 (meja periksa + monitor tanda vital) diunduh manual → `npx gltfpack -cc` → intigrasi GLTFLoader per-spawn dengan cache.
+  - shortcut: generator AI MCP tidak dipakai — tidak ada MCP server tersedia; prop farmasi spesifik = geometri prosedural + CanvasTexture (label).
 
-- [ ] **4.1. Dynamic Interior Spawner:**
-  - Buat sistem yang me-load isi ruang stasiun (meja dokter/apoteker, kursi pasien, monitor SIMRS, poster klinis) ketika pemain mendekati atau membuka pintu stasiun aktif.
-- [ ] **4.2. Kertas 3D Bertekstur Kanvas & Raycasting:**
-  - Buat modul generator `CanvasTexture` untuk kertas 3D (Skenario Dinding, Resep Dokter, Map Hasil Lab, Papan Klip Rubrik).
-  - Implementasikan *Raycaster* dari titik tengah layar (reticle) yang mendeteksi jarak dekat (< 4.5 meter) dan menampilkan *highlight* beserta tooltip konteks[cite: 2].
-- [ ] **4.3. Pipeline Aset 3D Gratis & MCP Generator:**
-  - Integrasikan aset `.glb` CC0 (kursi, meja, komputer) atau gunakan MCP Server (Blender MCP / Hugging Face Trellis / TripoSR) untuk men-generate prop farmasi spesifik (kotak obat, inhaler, botol sirup, insulin pen).
-  - Jalankan script kompresi `npx gltfpack -i input.glb -o output.glb -cc` untuk semua aset baru.
+## Fase 5: HUD, Modal, & Evaluasi — ✅ selesai
 
----
+- [x] **5.1.** Top bar (UKAI Labs, RANGKAIAN 10 STATION, Peserta 001, **tombol Menu**), kartu kiri (giliran, timer, **skip hanya Mode Latihan**), tracker grid 01–10 (klik → hanya Mode Latihan di lobby), tooltip tengah, toast & legenda bawah. **Teleport disembunyikan dalam SIMULASI.**
+- [x] **5.2.** DocModal: font scaler A−/A+, **tab pindah antar-dokumen meja**, **tombol Print**, Esc/klik tutup.
+- [x] **5.3.** Rubrik checklist interaktif (bobot, skor berjalan) + **Rapor Evaluasi OSCE** (skor per stasiun, lulus ≥ 70, butir belum dipenuhi).
 
-## Fase 5: Antarmuka HUD, Modal Dokumen, & Evaluasi
+## Fase 6: Audio, Optimasi Akhir & QA — ✅ selesai (dengan shortcut)
 
-- [ ] **5.1. Replikasi Presisi HUD Ujian:**
-  - Buat komponen Top Bar (**UKAI Labs OSCE Center**, **RANGKAIAN 10 STATION**, **Peserta 001**, **Menu Esc**)[cite: 1, 2].
-  - Buat Kartu Kiri (**GILIRAN ANDA**, Judul Stasiun, **Mode Latihan**, **Waktu baca**, tombol **Lewati sisa waktu ->**)[cite: 1, 2].
-  - Buat Kartu Kanan (**0/10 selesai**, **Rotasi**, tombol grid `01` s/d `10` yang bisa diklik untuk berpindah stasiun di Mode Latihan)[cite: 1, 2].
-  - Buat Tooltip Tengah (**Pintu Station XX — Terkunci - Tunggu bel mulai**) dan Bar Bawah (Toast status & legenda tombol `WASD`, `Mouse`, `E`, `Esc`)[cite: 1, 2].
-- [ ] **5.2. High-Resolution Document Reader Modal:**
-  - Buat modal baca dokumen saat kertas 3D diklik atau tombol `E` ditekan[cite: 1, 2].
-  - Tambahkan fitur *Font Size Scaler* (`A-` / `A+`), tab perpindahan cepat antar-dokumen di meja, dan tombol cetak/ringkasan.
-- [ ] **5.3. Sistem Rubrik Interaktif & Rekap Skor Akhir:**
-  - Buat checklist rubrik penilaian di dalam modal di mana pengguna dapat mencentang poin-poin konseling yang sudah dilakukan.
-  - Buat layar **Rapor Evaluasi OSCE** yang menampilkan nilai per stasiun dan status kelulusan (*Passing Grade*) setelah stasiun selesai.
-
----
-
-## Fase 6: Audio, Optimasi Akhir & QA
-
-- [ ] **6.1. Sound Effects (Web Audio API):**
-  - Integrasikan bunyi bel stasiun (*ting-tong* saat waktu baca habis dan saat waktu ujian selesai), suara buka/tutup pintu, suara kertas dibalik, dan bunyi klik pintu terkunci.
-- [ ] **6.2. Audit Performa & Memory Leak:**
-  - Pastikan geometri dan tekstur interior stasiun lama di-*dispose* saat berpindah stasiun.
-  - Uji coba navigasi penuh dari Station 01 sampai Station 10 dan pastikan FPS stabil di 60 FPS.
+- [x] **6.1.** SFX Web Audio: bel mulai/selesai, pintu buka/terkunci, kertas, klik langkah benar/salah/selesai + **mute global** (HUD & Menu) + **ambience rumah sakit** (loop file `public/audio/ambience.mp3` bila ada; fallback hum klinis + beep — degradasi aman tanpa file).
+- [x] **6.2.** Dispose ruangan lengkap; GLB cache tidak ter-destroy di disposeRoom (marker userData), dispose penuh saat mesin mati; FPS audit manual via build produksi (tanpa FPS meter permanen).
+  - shortcut: audit 60 FPS belum otomatis/berkelanjutan; jalankan `npm run build && node .output/server/index.mjs`, cek performa manual per stasiun kalau jarak berpindah terasa jatuh.

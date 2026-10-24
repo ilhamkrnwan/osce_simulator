@@ -2,22 +2,34 @@
 // Terputus dari Pinia — komunikasi via updatePhase()/teleport() (Vue→mesin) dan hooks (mesin→Vue).
 import * as THREE from 'three'
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import gsap from 'gsap'
-import { stations, getStation, type StationScenario, type DocumentItem, type PropItem } from '../data/stations'
+import { stations, getStation, type StationScenario, type DocumentItem, type PropItem, type Procedure, type ProcedureStep } from '../data/stations'
 import { makeTextTexture, makeSignTexture } from './textures'
 import { sfx } from './audio'
+
+// rig tubuh first-person: tangan yang mengayun + kaki (terlihat saat menunduk)
+interface BodyRig {
+  group: THREE.Group
+  leftArm: THREE.Mesh
+  rightArm: THREE.Mesh
+  leftLeg: THREE.Mesh
+  rightLeg: THREE.Mesh
+  phase: number
+}
 
 type Rect = { minX: number, maxX: number, minZ: number, maxZ: number }
 type OscePhase = 'lobby' | 'reading' | 'exam' | 'rekap'
 
 export interface TooltipInfo { title: string, subtitle?: string }
-export interface DocPayload { stationId: string, title: string, type: string, contentHtml: string }
+export interface DocPayload { stationId: string, title: string, type: string, contentHtml: string, id?: string }
 
 export interface EngineHooks {
   onTooltip: (info: TooltipInfo | null) => void
   onOpenDocument: (doc: DocPayload) => void
-  onPropInspect: (label: string, isCorrect: boolean | undefined) => void
+  onPropInspect: (stationId: string, label: string, isCorrect: boolean | undefined) => void
   onDoorRequested: (stationId: string) => void // pemain menekan pintu saat lobby → Vue mulai reading
+  onStepAttempt: (stationId: string, stepId: string) => void
   onToast: (text: string) => void
 }
 
@@ -29,11 +41,12 @@ const EYE = 1.7
 
 interface Interactable {
   mesh: THREE.Object3D
-  kind: 'door' | 'document' | 'rubric' | 'prop'
+  kind: 'door' | 'document' | 'rubric' | 'prop' | 'step'
   stationId: string
   label: string
   doc?: DocumentItem
   prop?: PropItem
+  step?: ProcedureStep
   isLockedNow?: boolean
 }
 
@@ -50,11 +63,23 @@ export class OsceEngine {
   private clock = new THREE.Clock()
   private raycaster = new THREE.Raycaster()
   private keys = new Set<string>()
+  // tombol gerak on-screen dipisah dari keyboard supaya release yang "bolos"
+  // (lepas di luar tombol / tap ditelan browser) tidak bikin karakter jalan terus
+  private vkeys = new Set<string>()
   private dragging = false
   private frameId = 0
   private disposed = false
-  /** Vue mematikan saat modal terbuka agar klik layar tidak mengunci pointer */
-  lockEnabled = true
+  private _lockEnabled = true
+  get lockEnabled() { return this._lockEnabled }
+  set lockEnabled(val: boolean) {
+    this._lockEnabled = val
+    if (!val && this.controls?.isLocked) {
+      try {
+        this.controls.unlock()
+      } catch {}
+    }
+  }
+  private lastUnlockTime = 0
 
   private player = new THREE.Vector3(0, EYE, 3)
   private forward = new THREE.Vector3()
@@ -62,6 +87,7 @@ export class OsceEngine {
 
   private corridorRect: Rect = { minX: -WALL_X + 0.4, maxX: WALL_X - 0.4, minZ: -40, maxZ: 4 }
   private extraRects: Rect[] = []
+  private chairRects: Rect[] = []
   private roomGroup: THREE.Group | null = null
   private openStationId: string | null = null
 
@@ -70,6 +96,11 @@ export class OsceEngine {
   private hover: Interactable | null = null
   private phase: OscePhase = 'lobby'
   private activeStationId: string | null = null
+  private bodyRig: BodyRig | null = null
+  private npc: THREE.Group | null = null
+  // cache GLB CC0 (pub/models) — clone dengan marker agar disposeRoom tidak menghancurkan cache
+  private gltfCache = new Map<string, { scene: THREE.Scene }>()
+  private gltfLoader = new GLTFLoader()
 
   constructor(canvas: HTMLCanvasElement, hooks: EngineHooks) {
     this.hooks = hooks
@@ -84,11 +115,17 @@ export class OsceEngine {
     this.scene.background = new THREE.Color(0xdfe4ec)
     this.scene.fog = new THREE.Fog(0xdfe4ec, 18, 62)
     this.controls = new PointerLockControls(this.camera, canvas)
+    this.controls.addEventListener('unlock', () => {
+      this.lastUnlockTime = performance.now()
+      this.keys.clear()
+      this.vkeys.clear()
+    })
 
     this.buildLights()
     this.buildShell()
     this.buildStations()
     this.buildChairs()
+    this.buildBodyRig()
 
     canvas.addEventListener('click', this.onClick)
     window.addEventListener('keydown', this.onKeyDown)
@@ -97,6 +134,10 @@ export class OsceEngine {
     window.addEventListener('mousemove', this.onMouseMove)
     window.addEventListener('mouseup', this.onMouseUp)
     window.addEventListener('resize', this.onResize)
+    // jaring pengaman gerak: lepas klik di mana pun / alt-tab = duduk (berhenti jalan)
+    window.addEventListener('pointerup', this.onGlobalPointerUp)
+    window.addEventListener('pointercancel', this.onGlobalPointerUp)
+    window.addEventListener('blur', this.onBlur)
 
     this.loop()
   }
@@ -269,9 +310,141 @@ export class OsceEngine {
     seats.count = i
     backs.count = i
     this.scene.add(seats, backs)
+
+    // collider AABB kursi — nyaman jalan di koridor harus terasa
+    const ch = 0.3
+    for (let k = 0; k < n; k++) {
+      const z = -1.5 - k * 2.4
+      const sx = (k < 14 ? -1 : 1)
+      this.chairRects.push({
+        minX: sx * 2.38 - ch,
+        maxX: sx * 2.38 + ch,
+        minZ: z - ch,
+        maxZ: z + ch,
+      })
+    }
+  }
+
+  // ===== rig tubuh first-person + tombol gerak =====
+
+  // D-pad layar (tombol gerak) — dipanggil HUD; set virtual terpisah dari keyboard
+  setMove(dir: 'up' | 'down' | 'left' | 'right', on: boolean) {
+    const code = { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD' }[dir]
+    if (on) this.vkeys.add(code)
+    else this.vkeys.delete(code)
+  }
+
+  private hasMove(code: string) {
+    return this.keys.has(code) || this.vkeys.has(code)
+  }
+
+  private buildBodyRig() {
+    const skin = new THREE.MeshStandardMaterial({ color: 0xd9a077, roughness: 0.8 })
+    const sleeve = new THREE.MeshStandardMaterial({ color: 0xe8eaed, roughness: 0.85 })
+    const pants = new THREE.MeshStandardMaterial({ color: 0x3b4557, roughness: 0.9 })
+
+    const mkArm = (x: number) => {
+      const g = new THREE.Group()
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.42, 4, 8), sleeve)
+      arm.position.y = -0.21
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10), skin)
+      hand.position.y = -0.45
+      g.add(arm, hand)
+      g.position.set(x, -0.62, -0.2)
+      g.rotation.x = -0.5 // mengarah ke depan
+      return { pivot: g, mesh: arm }
+    }
+    const mkLeg = (x: number) => {
+      const g = new THREE.Group()
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.5, 4, 8), pants)
+      leg.position.y = -0.28
+      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.07, 0.22), new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.9 }))
+      shoe.position.set(0, -0.58, 0.05)
+      g.add(leg, shoe)
+      g.position.set(x, -0.95, -0.35)
+      return { pivot: g, mesh: leg }
+    }
+
+    const la = mkArm(-0.3), ra = mkArm(0.3)
+    const ll = mkLeg(-0.13), rl = mkLeg(0.13)
+    const group = new THREE.Group()
+    group.add(la.pivot, ra.pivot, ll.pivot, rl.pivot)
+    this.camera.add(group)
+    this.scene.add(this.camera)
+    this.bodyRig = { group, leftArm: la.pivot, rightArm: ra.pivot, leftLeg: ll.pivot, rightLeg: rl.pivot, phase: 0 }
+  }
+
+  // dikeluarkan dari disposeRoom — npc adalah bagian ruangan
+  private animateBody(moving: boolean, dt: number) {
+    const rig = this.bodyRig
+    if (!rig) return
+    if (moving) rig.phase += dt * 7.5
+    const swing = moving ? Math.sin(rig.phase) * 0.55 : 0
+    const target = (mesh: THREE.Mesh, rot: number) => {
+      mesh.rotation.x += (rot - mesh.rotation.x) * Math.min(1, dt * 10)
+    }
+    target(rig.leftArm, -0.5 + swing)
+    target(rig.rightArm, -0.5 - swing)
+    target(rig.leftLeg, -swing)
+    target(rig.rightLeg, swing)
   }
 
   // ===== ruangan dinamis (lazy: hanya saat sesi ujian stasiun aktif) =====
+
+  // penguji duduk (jas putih) di sisi ruangan — kepala menoleh pelan + "napas" halus di loop
+  private spawnNpc(g: THREE.Group, side: number, cx: number, doorZ: number) {
+    const skin = new THREE.MeshStandardMaterial({ color: 0xd9a077, roughness: 0.8 })
+    const coat = new THREE.MeshStandardMaterial({ color: 0xf0f2f5, roughness: 0.85 })
+    const dark = new THREE.MeshStandardMaterial({ color: 0x3b4557, roughness: 0.9 })
+
+    const npc = new THREE.Group()
+    // torso jas putih duduk
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.26), coat)
+    torso.position.y = 0.72
+    npc.add(torso)
+    // kepala
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 14), skin)
+    head.position.y = 1.12
+    npc.add(head)
+    // kacamata sederhana
+    const glasses = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 0.04, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.4, metalness: 0.4 }),
+    )
+    glasses.position.set(0, 1.14, 0.12)
+    npc.add(glasses)
+    // paha (duduk) + betis ke bawah
+    const thighs = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.4), dark)
+    thighs.position.set(0, 0.45, 0.2)
+    npc.add(thighs)
+    const shinL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.45, 0.14), dark)
+    shinL.position.set(-0.11, 0.22, 0.38)
+    const shinR = shinL.clone()
+    shinR.position.x = 0.11
+    npc.add(shinL, shinR)
+    // lengan terlipat
+    const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.3, 4, 8), coat)
+    armL.rotation.set(-Math.PI / 2, 0, 0.4)
+    armL.position.set(-0.2, 0.88, 0.18)
+    const armR = armL.clone()
+    armR.position.x = 0.2
+    npc.add(armL, armR)
+    // kursi
+    const seat = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.08, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0x8a94a6, roughness: 0.7 }),
+    )
+    seat.position.y = 0.45
+    npc.add(seat)
+
+    // posisi: sisi berlawanan meja konseling, menghadap pemain
+    npc.position.set(cx - side * 1.3, 0, doorZ + 0.9)
+    npc.rotation.y = side < 0 ? -Math.PI / 3 : Math.PI / 3
+    npc.userData.head = head
+    g.add(npc)
+    this.npc = npc
+  }
+
   private spawnRoom(st: StationScenario) {
     if (this.roomGroup) this.disposeRoom()
     const side = st.roomSide === 'left' ? -1 : 1
@@ -369,28 +542,47 @@ export class OsceEngine {
       this.interactables.push({ mesh: board, kind: 'rubric', stationId: st.id, label: `Checklist & Rubrik — Station ${st.id}`, doc: rub })
     }
 
-    // prop obat 3D
+    // prop obat 3D — bentuk tergantung label (bukan semua kotak), warna netral
+    // (jawaban tidak boleh terungkap dari warna sebelum kandidat berinteraksi)
     for (const prop of st.props3D) {
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(0.2, 0.12, 0.28),
-        new THREE.MeshStandardMaterial({ color: prop.isCorrectChoice ? 0x166534 : 0x9f1239 }),
-      )
+      const box = makePropMesh(prop.label)
       const label = this.panel(0.19, 0.1, makeTextTexture(
         prop.label.split(' ').slice(0, 3),
-        { fontSize: 26, bg: prop.isCorrectChoice ? '#dcfce7' : '#fee2e2' },
+        { fontSize: 26, bg: '#f8fafc', color: '#334155' },
       ))
-      label.position.set(0, 0.02, 0.15)
+      label.position.set(0, 0.02, 0.17)
       box.add(label)
-      box.position.set(cx + side * prop.position[0], 0.83, doorZ + 0.9 + prop.position[2]
-      )
+      box.position.set(cx + side * prop.position[0], 0.83, doorZ + 0.9 + prop.position[2])
       g.add(box)
       this.interactables.push({ mesh: box, kind: 'prop', stationId: st.id, label: prop.label, prop })
+    }
+
+    // prop dasar prosedur + hotspot langkah (mekanik langkah 3D generik)
+    if (st.procedure) {
+      const base = makeProcedureBase(st.procedure.kind)
+      const bx = cx + side * 0.6
+      const bz = doorZ - 0.3
+      base.position.set(bx, 0.83, bz)
+      g.add(base)
+      for (const step of st.procedure.steps) {
+        const h = new THREE.Mesh(
+          new THREE.SphereGeometry(0.05, 12, 12),
+          new THREE.MeshStandardMaterial({ color: 0x7c3aed, emissive: 0x4c1d95, emissiveIntensity: 0.5 }),
+        )
+        h.position.set(bx + step.offset[0], 0.83 + step.offset[1] + 0.15, bz + step.offset[2])
+        g.add(h)
+        this.interactables.push({ mesh: h, kind: 'step', stationId: st.id, label: step.label, step })
+      }
     }
 
     this.scene.add(g)
     this.roomGroup = g
 
-    // area lakangmayap: ruang + celah pintu
+    // penguji duduk mengawasi sesi konseling
+    this.spawnNpc(g, side, cx, doorZ)
+
+    // area gerak pemain: ruangan + celah pintu
+    this.placeRoomAssets(g, side, cx, doorZ)
     const room: Rect = side < 0
       ? { minX: -(WALL_X + 4.6), maxX: -(WALL_X - 0.2), minZ: doorZ - 2, maxZ: doorZ + 2 }
       : { minX: WALL_X + 0.2, maxX: WALL_X + 4.6, minZ: doorZ - 2, maxZ: doorZ + 2 }
@@ -402,9 +594,12 @@ export class OsceEngine {
     if (!this.roomGroup) return
     const g = this.roomGroup
     this.roomGroup = null
+    this.npc = null
     this.extraRects = []
     this.interactables = this.interactables.filter(it => !g.getObjectById(it.mesh.id))
     g.traverse((o) => {
+      // GLB masuk cache — clone dipakai ulang antar-stasiun, jangan di-dispose
+      if ((o as { userData?: { glb?: boolean } }).userData?.glb) return
       const mesh = o as THREE.Mesh
       if (mesh.geometry) mesh.geometry.dispose()
       const mat = mesh.material as THREE.MeshStandardMaterial | undefined
@@ -412,6 +607,44 @@ export class OsceEngine {
       mat?.dispose()
     })
     this.scene.remove(g)
+  }
+
+  // ambil GLB dari cache/unduh; hasil clone diberi marker glb
+  private async getGlTF(url: string): Promise<THREE.Group | null> {
+    try {
+      if (!this.gltfCache.has(url)) {
+        const gltf = await this.gltfLoader.loadAsync(url)
+        this.gltfCache.set(url, { scene: gltf.scene })
+      }
+      const cached = this.gltfCache.get(url)
+      if (!cached) return null
+      const clone = cached.scene.clone(true)
+      clone.traverse((o) => { (o as { userData: object }).userData = { ...o.userData, glb: true } })
+      return clone
+    } catch {
+      return null // aset hilang / offline: lanjut tanpa GLB, geometri prosedural tetap ada
+    }
+  }
+
+  // aset CC0 pub/models: meja periksa & monitor tanda vital memperkaya ruangan
+  private placeRoomAssets(g: THREE.Group, side: number, cx: number, doorZ: number) {
+    void (async () => {
+      const table = await this.getGlTF('/models/exam-table.glb')
+      if (this.roomGroup !== g) return // ruangan sudah diganti → buang
+      if (table) {
+        table.position.set(cx - side * 1.1, 0, doorZ - 1.2)
+        table.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2
+        table.scale.setScalar(1)
+        g.add(table)
+      }
+      const monitor = await this.getGlTF('/models/vital-monitor.glb')
+      if (this.roomGroup !== g) return
+      if (monitor) {
+        monitor.position.set(cx + side * 1.5, 0, doorZ + 1.3)
+        monitor.rotation.y = side < 0 ? Math.PI / 2.2 : -Math.PI / 2.2
+        g.add(monitor)
+      }
+    })()
   }
 
   // ===== jalur komunikasi Vue =====
@@ -491,6 +724,16 @@ export class OsceEngine {
 
   private onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.code)
 
+  // klik/tap di mana pun pun = pastikan tombol virtual tidak nyangkut
+  private onGlobalPointerUp = () => {
+    if (this.vkeys.size) this.vkeys.clear()
+  }
+
+  private onBlur = () => {
+    this.keys.clear()
+    this.vkeys.clear()
+  }
+
   private onMouseDown = (e: MouseEvent) => {
     if (e.button === 0) this.dragging = true
   }
@@ -506,10 +749,27 @@ export class OsceEngine {
     this.camera.rotation.x = THREE.MathUtils.clamp(this.camera.rotation.x - e.movementY * 0.0035, -1.3, 1.3)
   }
 
+  private safeLock() {
+    if (!this.lockEnabled || this.disposed || this.controls.isLocked) return
+    const now = performance.now()
+    if (now - this.lastUnlockTime < 1300) return
+    try {
+      const dom = (this.controls as any).domElement || this.renderer.domElement
+      const p = dom?.requestPointerLock?.()
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          // Ignore transient SecurityError on rapid clicks
+        })
+      }
+    } catch {
+      // Ignore synchronous SecurityError
+    }
+  }
+
   private onClick = () => {
     if (!this.lockEnabled || this.disposed) return
     if (!this.controls.isLocked) {
-      this.controls.lock()
+      this.safeLock()
       return
     }
     this.interact()
@@ -532,12 +792,16 @@ export class OsceEngine {
       return
     }
     if (t.kind === 'prop') {
-      this.hooks.onPropInspect(t.label, t.prop?.isCorrectChoice)
+      this.hooks.onPropInspect(t.stationId, t.label, t.prop?.isCorrectChoice)
+      return
+    }
+    if (t.kind === 'step') {
+      if (t.step) this.hooks.onStepAttempt(t.stationId, t.step.id)
       return
     }
     if (t.doc) {
       sfx.paperFlip()
-      this.hooks.onOpenDocument({ stationId: t.stationId, title: t.doc.title, type: t.doc.type, contentHtml: t.doc.contentHtml })
+      this.hooks.onOpenDocument({ stationId: t.stationId, id: t.doc.id, title: t.doc.title, type: t.doc.type, contentHtml: t.doc.contentHtml })
     }
   }
 
@@ -570,6 +834,7 @@ export class OsceEngine {
       return { title: `Pintu Station ${t.stationId}`, subtitle: locked ? 'Terkunci — tunggu bel mulai' : 'Tekan E / klik untuk buka' }
     }
     if (t.kind === 'prop') return { title: t.label, subtitle: 'Prop konseling — inspect' }
+    if (t.kind === 'step') return { title: t.label, subtitle: 'Tindakan — tekan E' }
     return { title: t.label, subtitle: 'Baca dokumen — tekan E' }
   }
 
@@ -583,17 +848,21 @@ export class OsceEngine {
     this.frameId = requestAnimationFrame(this.loop)
     const dt = Math.min(this.clock.getDelta(), 0.05)
 
+    let moving = false
     if (this.controls.isLocked) {
       this.forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion)
       this.forward.y = 0
       this.forward.normalize()
       this.right.set(1, 0, 0).applyQuaternion(this.camera.quaternion)
-      const move = this.forward.clone()
-      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) move.add(this.forward)
-      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) move.sub(this.forward)
-      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) move.sub(this.right)
-      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) move.add(this.right)
+      this.right.y = 0
+      this.right.normalize()
+      const move = new THREE.Vector3(0, 0, 0)
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp') || this.vkeys.has('KeyW')) move.add(this.forward)
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown') || this.vkeys.has('KeyS')) move.sub(this.forward)
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft') || this.vkeys.has('KeyA')) move.sub(this.right)
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight') || this.vkeys.has('KeyD')) move.add(this.right)
       if (move.lengthSq() > 0) {
+        moving = true
         move.normalize().multiplyScalar(SPEED * dt)
         const nx = this.player.x + move.x
         const nz = this.player.z + move.z
@@ -608,12 +877,36 @@ export class OsceEngine {
       }
     }
 
+    this.animateBody(moving, dt)
+    // head bob + reset halus saat berhenti (kamera mengikuti player di sumbu x/z)
+    if (moving && this.bodyRig) {
+      this.camera.position.y = EYE + Math.sin(this.bodyRig.phase * 2) * 0.022
+    } else if (Math.abs(this.camera.position.y - EYE) > 0.001) {
+      this.camera.position.y += (EYE - this.camera.position.y) * Math.min(1, dt * 8)
+    }
+    if (this.npc) {
+      const t = this.clock.elapsedTime
+      const head = this.npc.userData.head as THREE.Mesh | undefined
+      if (head) head.rotation.y = Math.sin(t * 0.7) * 0.18
+      this.npc.rotation.z = Math.sin(t * 0.9) * 0.008 // "napas" halus
+    }
+
     this.updateHover()
     this.renderer.render(this.scene, this.camera)
   }
 
   private validPos(x: number, z: number) {
     const p = { x, z }
+    for (const c of this.chairRects) if (inside(c, p, 0)) return false
+    // pintu tertutup = penghalang fisik: menutup celah dinding stasiun
+    for (const [id, d] of this.doors) {
+      if (d.open) continue
+      const st = getStation(id)
+      const side = st.roomSide === 'left' ? -1 : 1
+      const z0 = this.stationZ(st.number)
+      const doorRect: Rect = { minX: side * WALL_X - 0.6, maxX: side * WALL_X + 0.6, minZ: z0 - 0.75, maxZ: z0 + 0.75 }
+      if (inside(doorRect, p, 0)) return false
+    }
     if (inside(this.corridorRect, p)) return true
     for (const r of this.extraRects) if (inside(r, p)) return true
     return false
@@ -633,11 +926,24 @@ export class OsceEngine {
     this.controls.unlock()
     window.removeEventListener('keydown', this.onKeyDown)
     window.removeEventListener('keyup', this.onKeyUp)
+    window.removeEventListener('pointerup', this.onGlobalPointerUp)
+    window.removeEventListener('pointercancel', this.onGlobalPointerUp)
+    window.removeEventListener('blur', this.onBlur)
     window.removeEventListener('mousedown', this.onMouseDown)
     window.removeEventListener('mousemove', this.onMouseMove)
     window.removeEventListener('mouseup', this.onMouseUp)
     window.removeEventListener('resize', this.onResize)
     this.disposeRoom()
+    // buang sumber daya GLB cache saat mesin mati
+    for (const { scene } of this.gltfCache.values()) {
+      scene.traverse((o) => {
+        const mesh = o as THREE.Mesh
+        mesh.geometry?.dispose()
+        if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose())
+        else (mesh.material as THREE.Material | undefined)?.dispose()
+      })
+    }
+    this.gltfCache.clear()
     this.renderer.dispose()
   }
 }
@@ -646,6 +952,53 @@ function closeDoor(d?: { pivot: THREE.Group, open: boolean }) {
   if (!d) return
   d.open = false
   gsap.to(d.pivot.rotation, { y: 0, duration: 0.7, ease: 'power2.in' })
+}
+
+// prop netral — bentuk bervariasi agar kemasan botol/box/tube terbaca di meja
+function makePropMesh(label: string): THREE.Mesh {
+  const l = label.toLowerCase()
+  const mat = new THREE.MeshStandardMaterial({ color: 0xe8ecf3, roughness: 0.55 })
+  if (l.includes('sirup') || l.includes('laktulosa') || l.includes('botol')) {
+    return new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.2, 14), mat)
+  }
+  if (l.includes('pen')) {
+    return new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.24, 10), mat)
+  }
+  if (l.includes('inhaler') || l.includes('turbuhaler')) {
+    return new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.03, 0.17, 12), mat)
+  }
+  if (l.includes('timbangan')) {
+    return new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.03, 0.14), new THREE.MeshStandardMaterial({ color: 0x9aa6b8, roughness: 0.4, metalness: 0.5 }))
+  }
+  // default: kotak kemasan obat
+  return new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.12, 0.28), mat)
+}
+
+// prop dasar prosedur (aplikasi differensiasi per jenis stasiun skill)
+function makeProcedureBase(kind: Procedure['kind']): THREE.Mesh {
+  switch (kind) {
+    case 'inhaler':
+    case 'insulin':
+      return new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.04, 0.26, 14),
+        new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.5 }),
+      )
+    case 'rekonstitusi':
+      return new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 0.22, 14),
+        new THREE.MeshStandardMaterial({ color: 0xfcd34d, roughness: 0.6 }),
+      )
+    case 'coldchain':
+      return new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.4, 0.4),
+        new THREE.MeshStandardMaterial({ color: 0xbae6fd, roughness: 0.45 }),
+      )
+    case 'peracikan':
+      return new THREE.Mesh(
+        new THREE.BoxGeometry(0.45, 0.05, 0.35),
+        new THREE.MeshStandardMaterial({ color: 0xd6d3d1, roughness: 0.6 }),
+      )
+  }
 }
 
 function wrap(text: string, at: number) {

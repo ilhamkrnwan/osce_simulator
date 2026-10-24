@@ -4,7 +4,8 @@ import type { DocPayload, TooltipInfo } from '../game/engine'
 const emit = defineEmits<{
   tooltip: [info: TooltipInfo | null]
   'open-document': [doc: DocPayload]
-  'prop-inspect': [label: string, isCorrect: boolean | undefined]
+  'prop-inspect': [stationId: string, label: string, isCorrect: boolean | undefined]
+  'step-attempt': [stationId: string, stepId: string]
   toast: [text: string]
 }>()
 
@@ -16,6 +17,7 @@ const canvasRef = ref<HTMLCanvasElement | null>(null)
 type EngineLike = {
   updatePhase: (p: string, id: string | null) => void
   teleport: (t: 'lobby' | 'door' | 'room') => void
+  setMove: (dir: 'up' | 'down' | 'left' | 'right', on: boolean) => void
   dispose: () => void
   lockEnabled: boolean
 }
@@ -27,7 +29,8 @@ onMounted(() => {
     engine = new OsceEngine(canvasRef.value, {
       onTooltip: i => emit('tooltip', i),
       onOpenDocument: d => emit('open-document', d),
-      onPropInspect: (label, isCorrect) => emit('prop-inspect', label, isCorrect),
+      onPropInspect: (sid, label, isCorrect) => emit('prop-inspect', sid, label, isCorrect),
+      onStepAttempt: (sid, stepId) => emit('step-attempt', sid, stepId),
       onDoorRequested: (stationId) => {
         store.startReadingPhase(stationId)
         emit('toast', `Waktu baca dimulai — giliran Anda Station ${stationId}. Pintu masih terkunci sampai bel berbunyi.`)
@@ -52,7 +55,10 @@ onBeforeUnmount(() => {
   engine = null
 })
 
-defineExpose({ teleport: (t: 'lobby' | 'door' | 'room') => engine?.teleport(t) })
+defineExpose({
+  teleport: (t: 'lobby' | 'door' | 'room') => engine?.teleport(t),
+  setMove: (dir: 'up' | 'down' | 'left' | 'right', on: boolean) => engine?.setMove(dir, on),
+})
 </script>
 
 <template>

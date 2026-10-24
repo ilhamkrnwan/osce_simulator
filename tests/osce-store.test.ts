@@ -31,6 +31,14 @@ describe('store OSCE', () => {
     expect(s.phase).toBe('exam')
   })
 
+  it('mode SIMULASI: skip waktu baca ditolak', () => {
+    const s = useOsceStore()
+    s.setMode('SIMULASI')
+    s.startReadingPhase()
+    s.skipReadingTime()
+    expect(s.phase).toBe('reading')
+  })
+
   it('tick saat waktu ujian habis menyelesaikan stasiun dengan skor 0', () => {
     const s = useOsceStore()
     s.startReadingPhase()
@@ -88,5 +96,43 @@ describe('data stasiun', () => {
     expect(nextStationId('01')).toBe('02')
     expect(nextStationId('10')).toBeNull()
     expect(getStation('09').roomSide).toBe('left')
+  })
+})
+
+describe('mekanik langkah prosedur (stasiun skill)', () => {
+  it('urutan benar → langkah tersimpan; salah urutan → wrong + tidak tersimpan', () => {
+    const s = useOsceStore()
+    const st5 = getStation('05').procedure!.steps
+    expect(s.recordStep('05', st5[1]!.id)).toBe('wrong')
+    expect(s.stepProgress['05']).toBeUndefined()
+    expect(s.recordStep('05', st5[0]!.id)).toBe('ok')
+    expect(s.recordStep('05', st5[1]!.id)).toBe('ok')
+    expect(s.stepProgress['05']).toEqual([st5[0]!.id, st5[1]!.id])
+  })
+
+  it('tuntas semua langkah → butir Tindakan terisi; tanpa salah → Urutan terisi', () => {
+    const s = useOsceStore()
+    const st5 = getStation('05').procedure!
+    for (const step of st5.steps) s.recordStep('05', step.id)
+    const tindakan = getStation('05').rubricItems.filter(it => it.category === 'Tindakan').map(it => it.id)
+    expect(s.checkedItems['05']).toContain('s5-04') // Tindakan: prime 2 UI
+    expect(s.checkedItems['05']).toEqual(expect.arrayContaining(tindakan))
+    expect(s.checkedItems['05']).toContain('s5-08') // Urutan
+  })
+
+  it('pernah salah urutan → butir Urutan tidak terisi', () => {
+    const s = useOsceStore()
+    const st2 = getStation('02').procedure!.steps
+    s.recordStep('02', st2[1]!.id) // salah
+    for (const step of st2) s.recordStep('02', step.id)
+    const ids = getStation('02').rubricItems.filter(it => it.category === 'Tindakan').map(it => it.id)
+    expect(s.checkedItems['02']).toEqual(expect.arrayContaining(ids))
+    expect(s.checkedItems['02']).not.toContain('s2-07') // butir Urutan Station 02
+  })
+
+  it('prop benar diklik → butir Pemilihan Station 03 terisi', () => {
+    const s = useOsceStore()
+    expect(s.autoCheckCategory('03', 'Pemilihan')).toBe(true)
+    expect(s.checkedItems['03']).toContain('s3-03')
   })
 })

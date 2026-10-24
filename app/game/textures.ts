@@ -39,7 +39,6 @@ export function makeTextTexture(
   return tex
 }
 
-// Ahli: plang kurang lebih metiu plang lorem
 // Plang ungu gantung dua sisi: STATION xx | xx
 export function makeSignTexture(id: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')

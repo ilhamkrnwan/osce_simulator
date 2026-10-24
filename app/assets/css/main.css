@@ -1,12 +1,146 @@
 @import 'tailwindcss';
 
+/* ===== Klinik Glass Dark — design system tokens =====
+   Dunia: kaca gelap di atas ruang klinik 3D; aksen violet (brand),
+   emerald/rose/amber hanya untuk semantik (lulus/gagal/peringatan). */
 @theme {
   --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Sora', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --animate-fade-up: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-in: fade-in 0.4s ease-out both;
+  --animate-pop: pop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pulse-soft: pulse-soft 1.3s ease-in-out infinite;
+  --animate-float: float 4s ease-in-out infinite;
+  --animate-float-delayed: float 4.5s ease-in-out 1.5s infinite;
+  --animate-float-reverse: float-reverse 5s ease-in-out infinite;
+  --animate-pulse-glow: pulse-glow 3s ease-in-out infinite;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes pulse-soft {
+    50% { opacity: 0.55; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes float-reverse {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(10px); }
+  }
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.5; filter: drop-shadow(0 0 15px rgba(139, 92, 246, 0.4)); }
+    50% { opacity: 0.85; filter: drop-shadow(0 0 30px rgba(139, 92, 246, 0.7)); }
+  }
+}
+
+/* panel kaca — dipakai semua overlay di atas canvas 3D */
+@utility glass {
+  background-color: rgb(13 20 32 / 0.72);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 16px 48px rgb(2 6 16 / 0.45);
+}
+
+/* kaca premium hero dengan highlight reflektif */
+@utility glass-hero {
+  background: linear-gradient(135deg, rgb(255 255 255 / 0.12) 0%, rgb(255 255 255 / 0.04) 100%);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 20px 50px -10px rgb(0 0 0 / 0.5), inset 0 1px 1px 0 rgb(255 255 255 / 0.25);
+}
+
+/* kaca lebih tembus (strip/baris) */
+@utility glass-soft {
+  background-color: rgb(13 20 32 / 0.5);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 body {
   font-family: var(--font-sans);
   overflow: hidden;
   background-color: black;
+  color: #f2f6fd;
+}
+
+/* chrome browser ikut desain, bukan default */
+::selection {
+  background-color: rgb(139 92 246 / 0.45);
+  color: #fff;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.14);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.24);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+:focus-visible {
+  outline: 2px solid #a78bfa;
+  outline-offset: 2px;
+}
+input {
+  accent-color: #8b5cf6;
+}
+
+/* konten dokumen (v-html) di atas permukaan gelap */
+.doc-prose :where(h2, h3) {
+  color: #f2f6fd;
+  font-weight: 700;
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+.doc-prose :where(h2) { font-size: 1.15rem; margin: 0.4em 0 0.35em; }
+.doc-prose :where(h3) { font-size: 0.95rem; margin: 0.5em 0 0.4em; }
+.doc-prose :where(p) {
+  color: #c3d0e2;
+  line-height: 1.65;
+  margin: 0.55em 0;
+}
+.doc-prose :where(li) {
+  color: #c3d0e2;
+  line-height: 1.6;
+}
+.doc-prose :where(ul, ol) { margin: 0.4em 0; padding-left: 1.1em; }
+.doc-prose :where(strong) { color: #f2f6fd; }
+.doc-prose :where(table) {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.9rem;
+}
+.doc-prose :where(tbody tr) { border-bottom: 1px solid rgb(255 255 255 / 0.08); }
+.doc-prose :where(td) { padding: 4px 14px 4px 0; color: #c3d0e2; }
+.doc-prose :where(kbd) {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: rgb(255 255 255 / 0.06);
 }

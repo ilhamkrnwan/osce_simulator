@@ -20,6 +20,8 @@ export default defineNuxtPlugin(() => {
       activeStationId: store.activeStationId,
       completed: store.completed,
       checkedItems: store.checkedItems,
+      stepProgress: store.stepProgress,
+      wrongSteps: store.wrongSteps,
     }
     localStorage.setItem(KEY, JSON.stringify(data))
   })

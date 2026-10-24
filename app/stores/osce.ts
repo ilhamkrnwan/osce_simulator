@@ -28,6 +28,10 @@ export const useOsceStore = defineStore('osce', () => {
   const checkedItems = ref<Record<string, string[]>>({})
   // per stasiun: hasil skorFinal saat stasiun selesai
   const completed = ref<Record<string, StationResult>>({})
+  // per stasiun: ids langkah prosedur yang sudah dikerjakan (mekanik langkah 3D)
+  const stepProgress = ref<Record<string, string[]>>({})
+  // per stasiun: jumlah langkah yang salah urutan
+  const wrongSteps = ref<Record<string, number>>({})
 
   const activeStation = computed<StationScenario | null>(() =>
     activeStationId.value ? getStation(activeStationId.value) : null,
@@ -47,7 +51,8 @@ export const useOsceStore = defineStore('osce', () => {
   }
 
   function skipReadingTime() {
-    if (phase.value === 'reading') enterRoom()
+    if (phase.value !== 'reading' || mode.value === 'SIMULASI') return
+    enterRoom()
   }
 
   function enterRoom() {
@@ -73,6 +78,49 @@ export const useOsceStore = defineStore('osce', () => {
       ? list.filter(i => i !== itemId)
       : [...list, itemId]
     checkedItems.value = { ...checkedItems.value, [stationId]: next }
+  }
+
+  // otomatis centang semua butir rubrik pada kategori tertentu (dipanggil mesin 3D:
+  // 'Pemilihan' saat prop benar diklik; 'Tindakan'/'Urutan' saat langkah prosedur tuntas)
+  function autoCheckCategory(stationId: string, category: string) {
+    const done = (checkedItems.value[stationId] ?? [])
+    const ids = getStation(stationId).rubricItems
+      .filter(it => it.category === category && !done.includes(it.id))
+      .map(it => it.id)
+    if (ids.length === 0) return false
+    checkedItems.value = { ...checkedItems.value, [stationId]: [...done, ...ids] }
+    return true
+  }
+
+  // hasil tekan langkah prosedur di prop 3D: validasi urutan + auto-check rubrik
+  // status: 'ok' (langkah benar, lanjut) | 'done' (tuntas) | 'wrong' (salah urutan)
+  function recordStep(stationId: string, stepId: string): 'ok' | 'done' | 'wrong' {
+    const steps = getStation(stationId).procedure?.steps
+    if (!steps) return 'wrong'
+    const done = stepProgress.value[stationId] ?? []
+    if (done.includes(stepId)) return 'ok'
+    const expected = steps[done.length]?.id
+    if (stepId !== expected) {
+      wrongSteps.value = { ...wrongSteps.value, [stationId]: (wrongSteps.value[stationId] ?? 0) + 1 }
+      return 'wrong'
+    }
+    const next = [...done, stepId]
+    stepProgress.value = { ...stepProgress.value, [stationId]: next }
+    if (next.length === steps.length) {
+      autoCheckCategory(stationId, 'Tindakan')
+      if ((wrongSteps.value[stationId] ?? 0) === 0) autoCheckCategory(stationId, 'Urutan')
+      return 'done'
+    }
+    return 'ok'
+  }
+
+  function resetSteps(stationId: string) {
+    const { [stationId]: _s, ...restProgress } = stepProgress.value  
+    const { [stationId]: _w, ...restWrong } = wrongSteps.value  
+    void _s
+    void _w
+    stepProgress.value = restProgress
+    wrongSteps.value = restWrong
   }
 
   function scoreOf(stationId: string): number {
@@ -108,14 +156,25 @@ export const useOsceStore = defineStore('osce', () => {
     timeLeft.value = 0
     checkedItems.value = {}
     completed.value = {}
+    stepProgress.value = {}
+    wrongSteps.value = {}
   }
 
   // suspend rehydrasi plugin persist (osce-persist.client.ts) menulis kedua field ini
-  function hydrate(state: { mode?: OsceMode; activeStationId?: string | null; completed?: Record<string, StationResult>; checkedItems?: Record<string, string[]> }) {
+  function hydrate(state: {
+    mode?: OsceMode
+    activeStationId?: string | null
+    completed?: Record<string, StationResult>
+    checkedItems?: Record<string, string[]>
+    stepProgress?: Record<string, string[]>
+    wrongSteps?: Record<string, number>
+  }) {
     if (state.mode) mode.value = state.mode
     if (state.activeStationId) activeStationId.value = state.activeStationId
     if (state.completed) completed.value = state.completed
     if (state.checkedItems) checkedItems.value = state.checkedItems
+    if (state.stepProgress) stepProgress.value = state.stepProgress
+    if (state.wrongSteps) wrongSteps.value = state.wrongSteps
   }
 
   return {
@@ -127,12 +186,17 @@ export const useOsceStore = defineStore('osce', () => {
     checkedItems,
     completed,
     completedCount,
+    stepProgress,
+    wrongSteps,
     setMode,
     startReadingPhase,
     skipReadingTime,
     enterRoom,
     tick,
     toggleRubricItem,
+    autoCheckCategory,
+    recordStep,
+    resetSteps,
     scoreOf,
     completeStation,
     reset,
