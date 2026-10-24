@@ -84,17 +84,20 @@ function toggleSound() {
 }
 
 const timeLabel = computed(() => {
+  if (store.unlimitedTime) {
+    return 'Tanpa Batas'
+  }
   const t = Math.max(0, store.timeLeft)
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
 })
 
 const timeCritical = computed(() =>
-  (store.phase === 'exam' || store.phase === 'reading') && store.timeLeft <= 60)
+  !store.unlimitedTime && (store.phase === 'exam' || store.phase === 'reading') && store.timeLeft <= 60)
 
 const phaseLabel = computed(() => ({
-  lobby: 'Masuk ke pintu stasiun untuk mulai',
-  reading: 'Waktu baca — pintu terkunci',
-  exam: 'Sesi konseling berjalan',
+  lobby: 'Dekati pintu stasiun untuk buka & masuk',
+  reading: 'Papan skenario stasiun',
+  exam: 'Eksplorasi bebas — amati ruangan, resep & prop',
   rekap: 'Rangkaian selesai',
 } as Record<string, string>)[store.phase] ?? '')
 
@@ -144,15 +147,15 @@ const stationLabel = computed(() => store.activeStation?.title ?? 'Lorong tengah
       </div>
 
       <div v-if="store.phase === 'reading' || store.phase === 'exam'" class="mt-3 flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 ring-1 ring-white/8">
-        <span class="text-[11px] font-medium text-slate-400">Waktu tersisa</span>
+        <span class="text-[11px] font-medium text-slate-400">{{ store.unlimitedTime ? 'Waktu eksplorasi' : 'Waktu tersisa' }}</span>
         <span
-          class="font-mono text-lg font-bold tabular-nums transition-colors"
-          :class="timeCritical ? 'animate-pulse-soft text-rose-400' : 'text-white'"
+          class="font-mono text-sm font-bold tabular-nums transition-colors"
+          :class="timeCritical ? 'animate-pulse-soft text-rose-400' : 'text-violet-300'"
         >{{ timeLabel }}</span>
       </div>
       <div class="mt-2 flex items-center gap-2 text-[11px]">
-        <span class="rounded-md bg-violet-500/15 px-2 py-0.5 font-semibold text-violet-300">Mode {{ store.mode }}</span>
-        <span v-if="store.phase === 'exam'" class="text-amber-300/90">Bel berbunyi — kerjakan tugas di dalam ruangan</span>
+        <span class="rounded-md bg-violet-500/15 px-2 py-0.5 font-semibold text-violet-300">{{ store.unlimitedTime ? 'Eksplorasi Bebas' : 'Mode ' + store.mode }}</span>
+        <span v-if="store.phase === 'exam'" class="text-amber-300/90">Pintu terbuka — amati prop & dokumen meja</span>
       </div>
 
       <button
@@ -190,13 +193,13 @@ const stationLabel = computed(() => store.activeStation?.title ?? 'Lorong tengah
                 ? 'bg-violet-500 text-white ring-2 ring-violet-300/70'
                 : 'bg-white/8 text-slate-300 hover:bg-white/15',
           ]"
-          :title="store.completed[String(i).padStart(2, '0')] ? `Selesai — skor ${store.completed[String(i).padStart(2, '0')].score}` : `Station ${i}`"
-          @click="store.phase === 'lobby' && store.mode === 'LATIHAN' && store.startReadingPhase(String(i).padStart(2, '0'))"
+          :title="store.completed[String(i).padStart(2, '0')] ? `Selesai — skor ${store.completed[String(i).padStart(2, '0')].score}` : `Pilih Station ${i}`"
+          @click="store.enterStation(String(i).padStart(2, '0')); emit('teleport', 'door')"
         >
           {{ String(i).padStart(2, '0') }}
         </button>
       </div>
-      <div class="mt-3 text-right text-[10px] text-slate-400">60 dtk baca · 9 mnt sesi per stasiun</div>
+      <div class="mt-3 text-right text-[10px] text-slate-400">10 stasiun UKAI · Simulasi interaktif bebas</div>
     </section>
 
     <!-- crosshair + tooltip -->

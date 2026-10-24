@@ -32,8 +32,8 @@ onMounted(() => {
       onPropInspect: (sid, label, isCorrect) => emit('prop-inspect', sid, label, isCorrect),
       onStepAttempt: (sid, stepId) => emit('step-attempt', sid, stepId),
       onDoorRequested: (stationId) => {
-        store.startReadingPhase(stationId)
-        emit('toast', `Waktu baca dimulai — giliran Anda Station ${stationId}. Pintu masih terkunci sampai bel berbunyi.`)
+        store.enterStation(stationId)
+        emit('toast', `Pintu Station ${stationId} terbuka — silakan masuk dan amati ruangan.`)
       },
       onToast: t => emit('toast', t),
     })

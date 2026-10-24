@@ -43,6 +43,7 @@ const modalOpen = computed(() => activeDoc.value !== null || welcome.value || me
 
 function startGame(mode: 'LATIHAN' | 'SIMULASI') {
   store.setMode(mode)
+  store.setUnlimitedTime(true)
   welcome.value = false
   void startAmbience() // gesture pertama — AudioContext legal mulai di sini
 }
@@ -64,6 +65,14 @@ function onDocComplete() {
 
 // prop di meja dipilih: benar → butir Pemilihan auto-terisi (st 03/04/10), salah → toast
 function onPropInspect(stationId: string, label: string, isCorrect: boolean | undefined) {
+  if (label.includes('Penguji') || label.includes('Pasien')) {
+    showToast('Penguji OSCE: "Silakan periksa resep & hasil lab di meja. Amati sediaan obat yang tersedia untuk pasien."')
+    return
+  }
+  if (label.includes('SIMRS')) {
+    showToast('Layar SIMRS: Menampilkan rekam medis elektronik & profil terapi pasien.')
+    return
+  }
   if (isCorrect === true) {
     const filled = store.autoCheckCategory(stationId, 'Pemilihan')
     showToast(filled ? `${label} ✓ pilihan tepat — butir Pemilihan terisi` : `${label} ✓ pilihan tepat`)

@@ -278,7 +278,13 @@ export class OsceEngine {
         })
       }
       this.interactables.push({
-        mesh: pivot,
+        mesh: leaf,
+        kind: 'door',
+        stationId: st.id,
+        label: `Pintu Station ${st.id}`,
+      })
+      this.interactables.push({
+        mesh: knob,
         kind: 'door',
         stationId: st.id,
         label: `Pintu Station ${st.id}`,
@@ -392,7 +398,7 @@ export class OsceEngine {
   // ===== ruangan dinamis (lazy: hanya saat sesi ujian stasiun aktif) =====
 
   // penguji duduk (jas putih) di sisi ruangan — kepala menoleh pelan + "napas" halus di loop
-  private spawnNpc(g: THREE.Group, side: number, cx: number, doorZ: number) {
+  private spawnNpc(g: THREE.Group, side: number, cx: number, doorZ: number, stationId: string) {
     const skin = new THREE.MeshStandardMaterial({ color: 0xd9a077, roughness: 0.8 })
     const coat = new THREE.MeshStandardMaterial({ color: 0xf0f2f5, roughness: 0.85 })
     const dark = new THREE.MeshStandardMaterial({ color: 0x3b4557, roughness: 0.9 })
@@ -443,6 +449,12 @@ export class OsceEngine {
     npc.userData.head = head
     g.add(npc)
     this.npc = npc
+    this.interactables.push({
+      mesh: torso,
+      kind: 'prop',
+      stationId,
+      label: 'Penguji OSCE & Pasien Simulasi',
+    })
   }
 
   private spawnRoom(st: StationScenario) {
@@ -509,6 +521,12 @@ export class OsceEngine {
     const stand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.08), new THREE.MeshStandardMaterial({ color: 0x222222 }))
     stand.position.set(monitor.position.x, 1.0, monitor.position.z)
     g.add(stand)
+    this.interactables.push({
+      mesh: monitor,
+      kind: 'prop',
+      stationId: st.id,
+      label: 'Layar SIMRS e-Farmasi',
+    })
 
     // dokumen medis di meja
     const tableDocs = st.documents.filter(d => d.type === 'prescription' || d.type === 'lab_result' || d.type === 'rubric_checklist')
@@ -579,14 +597,16 @@ export class OsceEngine {
     this.roomGroup = g
 
     // penguji duduk mengawasi sesi konseling
-    this.spawnNpc(g, side, cx, doorZ)
+    this.spawnNpc(g, side, cx, doorZ, st.id)
 
-    // area gerak pemain: ruangan + celah pintu
+    // area gerak pemain: ruangan + celah pintu (overlap aman dengan koridor)
     this.placeRoomAssets(g, side, cx, doorZ)
+    const doorway: Rect = side < 0
+      ? { minX: -(WALL_X + 1.8), maxX: -1.0, minZ: doorZ - 0.85, maxZ: doorZ + 0.85 }
+      : { minX: 1.0, maxX: WALL_X + 1.8, minZ: doorZ - 0.85, maxZ: doorZ + 0.85 }
     const room: Rect = side < 0
-      ? { minX: -(WALL_X + 4.6), maxX: -(WALL_X - 0.2), minZ: doorZ - 2, maxZ: doorZ + 2 }
-      : { minX: WALL_X + 0.2, maxX: WALL_X + 4.6, minZ: doorZ - 2, maxZ: doorZ + 2 }
-    const doorway: Rect = { minX: -(WALL_X + 0.35), maxX: WALL_X + 0.35, minZ: doorZ - 0.7, maxZ: doorZ + 0.7 }
+      ? { minX: -(WALL_X + 5.0), maxX: -(WALL_X - 0.5), minZ: doorZ - 2.2, maxZ: doorZ + 2.2 }
+      : { minX: WALL_X - 0.5, maxX: WALL_X + 5.0, minZ: doorZ - 2.2, maxZ: doorZ + 2.2 }
     this.extraRects = [room, doorway]
   }
 
@@ -689,21 +709,25 @@ export class OsceEngine {
       this.player.set(0, EYE, z + 1.8)
     }
     else {
-      const st = this.activeStationId ? getStation(this.activeStationId) : null
-      if (!st) { this.hooks.onToast('Tidak ada stasiun aktif untuk teleport.'); return }
-      // ruangan belum dipanggil (mis. masih lobby) → spawn dulu sebagai preview
-      if (!this.roomGroup || this.openStationId !== st.id) this.spawnRoom(st)
+      const targetId = this.activeStationId ?? '01'
+      const st = getStation(targetId)
+      // ruangan belum dipanggil (mis. masih lobby) → spawn dulu dan buka pintu
+      if (!this.roomGroup || this.openStationId !== st.id) {
+        this.openDoor(st.id)
+        this.spawnRoom(st)
+        this.hooks.onDoorRequested(st.id)
+      }
       const side = st.roomSide === 'left' ? -1 : 1
       const px = side * (WALL_X + 1.0)
-      const pz = z + 1.0
+      const pz = this.stationZ(st.number) + 1.0
       this.player.set(px, EYE, pz)
       // menghadap meja konseling
       const tx = side * (WALL_X + 2.6) - side * 0.2
-      this.camera.rotation.y = Math.atan2(-(tx - px), -((z + 0.4) - pz))
+      this.camera.rotation.y = Math.atan2(-(tx - px), -((this.stationZ(st.number) + 0.4) - pz))
       this.camera.rotation.x = 0
     }
     this.camera.position.copy(this.player)
-    this.hooks.onToast(`Teleport: ${target === 'room' ? 'ruang stasiun aktif' : target === 'door' ? 'depan pintu stasiun aktif' : 'lorong tengah'}`)
+    this.hooks.onToast(`Teleport: ${target === 'room' ? 'ruang stasiun' : target === 'door' ? 'depan pintu stasiun' : 'lorong tengah'}`)
   }
 
   private openDoor(stationId: string) {
@@ -712,7 +736,10 @@ export class OsceEngine {
     d.open = true
     this.openStationId = stationId
     sfx.doorOpen()
-    gsap.to(d.pivot.rotation, { y: Math.PI * 0.55, duration: 0.9, ease: 'power2.out' })
+    const st = getStation(stationId)
+    const side = st.roomSide === 'left' ? -1 : 1
+    const targetRot = side * Math.PI * 0.55
+    gsap.to(d.pivot.rotation, { y: targetRot, duration: 0.9, ease: 'power2.out' })
   }
 
   // ===== input =====
@@ -775,20 +802,26 @@ export class OsceEngine {
     this.interact()
   }
 
-  // E pada target hover; door saat lobby = minta mulai reading (diputus Vue)
+  // E pada target hover; interaksi pintu, prop, langkah 3D, dokumen
   private interact() {
     const t = this.hover
     if (!t) return
-    const locked = this.isDoorLocked(t)
     if (t.kind === 'door') {
-      if (locked) {
+      const d = this.doors.get(t.stationId)
+      if (d?.open) {
+        closeDoor(d)
         sfx.doorLocked()
-        this.hooks.onToast(t.stationId === this.activeStationId
-          ? 'Pintu terkunci — tunggu bel mulai.'
-          : `Station ${t.stationId} belum jiliran Anda.`)
-        return
+        this.hooks.onToast(`Pintu Station ${t.stationId} ditutup.`)
+      } else {
+        if (this.openStationId && this.openStationId !== t.stationId) {
+          const prev = this.doors.get(this.openStationId)
+          if (prev) closeDoor(prev)
+        }
+        this.openDoor(t.stationId)
+        this.spawnRoom(getStation(t.stationId))
+        this.hooks.onDoorRequested(t.stationId)
+        this.hooks.onToast(`Pintu Station ${t.stationId} terbuka — silakan masuk dan amati ruangan.`)
       }
-      if (this.phase === 'lobby') this.hooks.onDoorRequested(t.stationId)
       return
     }
     if (t.kind === 'prop') {
@@ -805,11 +838,8 @@ export class OsceEngine {
     }
   }
 
-  private isDoorLocked(t: Interactable) {
-    if (t.kind !== 'door') return false
-    if (this.phase === 'lobby') return false
-    if (this.phase === 'reading') return true
-    return !(this.phase === 'exam' && this.activeStationId === t.stationId)
+  private isDoorLocked(_t: Interactable) {
+    return false
   }
 
   // ===== raycast per frame =====
@@ -824,18 +854,22 @@ export class OsceEngine {
     const t = this.hover
     const changed = (t ?? null) !== (target ?? null) || (target && t && t.label !== target.label)
     if (changed) this.setTooltip(target ? this.tooltipFor(target) : null)
-    if (target) target.isLockedNow = this.isDoorLocked(target)
+    if (target) target.isLockedNow = false
     this.hover = target
   }
 
   private tooltipFor(t: Interactable): TooltipInfo {
     if (t.kind === 'door') {
-      const locked = this.isDoorLocked(t)
-      return { title: `Pintu Station ${t.stationId}`, subtitle: locked ? 'Terkunci — tunggu bel mulai' : 'Tekan E / klik untuk buka' }
+      const d = this.doors.get(t.stationId)
+      return {
+        title: `Pintu Station ${t.stationId}`,
+        subtitle: d?.open ? 'Klik / E untuk tutup pintu' : 'Klik / E untuk buka & masuk ruangan',
+      }
     }
-    if (t.kind === 'prop') return { title: t.label, subtitle: 'Prop konseling — inspect' }
-    if (t.kind === 'step') return { title: t.label, subtitle: 'Tindakan — tekan E' }
-    return { title: t.label, subtitle: 'Baca dokumen — tekan E' }
+    if (t.kind === 'prop') return { title: t.label, subtitle: 'Prop ruangan — klik / E untuk amati' }
+    if (t.kind === 'step') return { title: t.label, subtitle: 'Tindakan 3D — tekan E' }
+    if (t.kind === 'rubric') return { title: t.label, subtitle: 'Lembar Penilaian & Rubrik — tekan E untuk buka' }
+    return { title: t.label, subtitle: 'Papan Skenario — tekan E untuk baca' }
   }
 
   private setTooltip(info: TooltipInfo | null) {

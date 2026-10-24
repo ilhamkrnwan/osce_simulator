@@ -80,6 +80,23 @@ describe('store OSCE', () => {
     expect(s.completed['01']).toEqual({ score: 70, passed: true })
   })
 
+  it('enterStation langsung mengaktifkan stasiun ke fase exam', () => {
+    const s = useOsceStore()
+    s.enterStation('04')
+    expect(s.activeStationId).toBe('04')
+    expect(s.phase).toBe('exam')
+    expect(s.timeLeft).toBe(540)
+  })
+
+  it('unlimitedTime: waktu habis tidak mengusir pemain dari ruangan', () => {
+    const s = useOsceStore()
+    s.setUnlimitedTime(true)
+    s.enterStation('01')
+    for (let i = 0; i < 600; i++) s.tick()
+    expect(s.phase).toBe('exam')
+    expect(s.completed['01']).toBeUndefined()
+  })
+
   it('reset mengosongkan semuanya', () => {
     const s = useOsceStore()
     s.startReadingPhase()

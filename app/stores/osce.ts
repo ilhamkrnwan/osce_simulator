@@ -39,8 +39,20 @@ export const useOsceStore = defineStore('osce', () => {
 
   const completedCount = computed(() => Object.keys(completed.value).length)
 
+  const unlimitedTime = ref(false)
+
+  function setUnlimitedTime(val: boolean) {
+    unlimitedTime.value = val
+  }
+
   function setMode(m: OsceMode) {
     mode.value = m
+  }
+
+  function enterStation(stationId: string) {
+    activeStationId.value = stationId
+    phase.value = 'exam'
+    timeLeft.value = EXAM_DURATION_SEC
   }
 
   function startReadingPhase(stationId?: string) {
@@ -61,8 +73,19 @@ export const useOsceStore = defineStore('osce', () => {
     timeLeft.value = EXAM_DURATION_SEC
   }
 
-  // Dipanggil jam game 1× / detik (composable jam menyusul di Fase 3)
+  // Dipanggil jam game 1× / detik
   function tick() {
+    if (unlimitedTime.value) {
+      // Mode eksplorasi tanpa batasan waktu: tidak pernah mengusir pemain dari ruangan
+      if (phase.value === 'reading') {
+        if (timeLeft.value > 0) timeLeft.value--
+        if (timeLeft.value <= 0) enterRoom()
+      } else if (phase.value === 'exam') {
+        if (timeLeft.value > 0) timeLeft.value--
+      }
+      return
+    }
+
     if (phase.value === 'reading') {
       timeLeft.value--
       if (timeLeft.value <= 0) enterRoom()
@@ -188,6 +211,9 @@ export const useOsceStore = defineStore('osce', () => {
     completedCount,
     stepProgress,
     wrongSteps,
+    unlimitedTime,
+    setUnlimitedTime,
+    enterStation,
     setMode,
     startReadingPhase,
     skipReadingTime,

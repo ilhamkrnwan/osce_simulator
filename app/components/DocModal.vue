@@ -9,12 +9,24 @@ const emit = defineEmits<{ close: [], complete: [] }>()
 const store = useOsceStore()
 const fontSize = ref(15)
 
-const stationDocs = computed(() => store.activeStationId === props.doc.stationId
-  ? store.activeStation?.documents ?? [props.doc]
-  : [props.doc])
+const stationDocs = computed(() => {
+  if (props.doc.type === 'scenario_board') {
+    // Papan klip di dinding luar pintu: HANYA tampilkan pengantar skenario
+    return [props.doc]
+  }
+  // Dokumen kasus klinis meja (resep, lab) & rubrik penilaian di dalam ruangan
+  const all = store.activeStation?.documents ?? [props.doc]
+  return all.filter(d => d.type !== 'scenario_board')
+})
 
 // tab: dokumen aktif di meja; default = dokumen yang dibuka mesin
-const activeId = ref(props.doc.id ?? stationDocs.value[0]!.id)
+const activeId = ref(props.doc.id ?? stationDocs.value[0]?.id)
+watch(() => props.doc, (newDoc) => {
+  if (newDoc) {
+    activeId.value = newDoc.id ?? stationDocs.value[0]?.id
+  }
+}, { immediate: true })
+
 const active = computed(() => stationDocs.value.find(d => d.id === activeId.value) ?? props.doc)
 
 function selectTab(id: string) {
@@ -27,7 +39,7 @@ const checked = computed(() => store.checkedItems[props.doc.stationId] ?? [])
 const items = computed(() => store.activeStation?.rubricItems ?? [])
 
 function toggle(id: string) {
-  if (store.phase === 'exam') store.toggleRubricItem(props.doc.stationId, id)
+  store.toggleRubricItem(props.doc.stationId, id)
 }
 
 const liveScore = computed(() => store.scoreOf(props.doc.stationId))
