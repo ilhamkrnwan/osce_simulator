@@ -76,7 +76,7 @@ export class OsceEngine {
     if (!val && this.controls?.isLocked) {
       try {
         this.controls.unlock()
-      } catch {}
+      } catch { /* unlock race — abaikan */ }
     }
   }
   private lastUnlockTime = 0
@@ -107,6 +107,8 @@ export class OsceEngine {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false)
+    this.renderer.shadowMap.enabled = true
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
 
     this.camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 100)
     this.camera.rotation.order = 'YXZ'
@@ -160,6 +162,25 @@ export class OsceEngine {
       new THREE.PlaneGeometry(w, h),
       new THREE.MeshStandardMaterial({ map: tex }),
     )
+  }
+
+  // tekstur vinil klinik: ubin 0.5 m, nat abu, speckle halus — dipakai lantai ruangan
+  private tileTexture(): THREE.Texture {
+    const c = document.createElement('canvas')
+    c.width = c.height = 256
+    const x = c.getContext('2d')!
+    x.fillStyle = '#cfd4cd'
+    x.fillRect(0, 0, 256, 256)
+    for (let i = 0; i < 2600; i++) {
+      x.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(60,70,65,0.05)'
+      x.fillRect(Math.random() * 256, Math.random() * 256, 2, 2)
+    }
+    x.strokeStyle = 'rgba(120,128,122,0.55)'
+    x.lineWidth = 3
+    x.strokeRect(0, 0, 256, 256)
+    const t = new THREE.CanvasTexture(c)
+    t.wrapS = t.wrapT = THREE.RepeatWrapping
+    return t
   }
 
   private buildShell() {
@@ -399,58 +420,155 @@ export class OsceEngine {
 
   // penguji duduk (jas putih) di sisi ruangan — kepala menoleh pelan + "napas" halus di loop
   private spawnNpc(g: THREE.Group, side: number, cx: number, doorZ: number, stationId: string) {
-    const skin = new THREE.MeshStandardMaterial({ color: 0xd9a077, roughness: 0.8 })
-    const coat = new THREE.MeshStandardMaterial({ color: 0xf0f2f5, roughness: 0.85 })
-    const dark = new THREE.MeshStandardMaterial({ color: 0x3b4557, roughness: 0.9 })
+    const skin = new THREE.MeshStandardMaterial({ color: 0xdca87c, roughness: 0.75 })
+    const coat = new THREE.MeshStandardMaterial({ color: 0xf4f6f8, roughness: 0.85 })
+    const shirt = new THREE.MeshStandardMaterial({ color: 0x9fc3d8, roughness: 0.9 })
+    const trouser = new THREE.MeshStandardMaterial({ color: 0x414a56, roughness: 0.9 })
+    const hair = new THREE.MeshStandardMaterial({ color: 0x372a20, roughness: 0.95 })
+    const dark = new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.5 })
+    const metal = new THREE.MeshStandardMaterial({ color: 0x8d939b, roughness: 0.4, metalness: 0.7 })
 
     const npc = new THREE.Group()
-    // torso jas putih duduk
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.26), coat)
-    torso.position.y = 0.72
-    npc.add(torso)
-    // kepala
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 14), skin)
-    head.position.y = 1.12
-    npc.add(head)
-    // kacamata sederhana
-    const glasses = new THREE.Mesh(
-      new THREE.BoxGeometry(0.2, 0.04, 0.02),
-      new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.4, metalness: 0.4 }),
-    )
-    glasses.position.set(0, 1.14, 0.12)
-    npc.add(glasses)
-    // paha (duduk) + betis ke bawah
-    const thighs = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.4), dark)
-    thighs.position.set(0, 0.45, 0.2)
-    npc.add(thighs)
-    const shinL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.45, 0.14), dark)
-    shinL.position.set(-0.11, 0.22, 0.38)
-    const shinR = shinL.clone()
-    shinR.position.x = 0.11
-    npc.add(shinL, shinR)
-    // lengan terlipat
-    const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.3, 4, 8), coat)
-    armL.rotation.set(-Math.PI / 2, 0, 0.4)
-    armL.position.set(-0.2, 0.88, 0.18)
-    const armR = armL.clone()
-    armR.position.x = 0.2
-    npc.add(armL, armR)
-    // kursi
-    const seat = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 0.08, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0x8a94a6, roughness: 0.7 }),
-    )
-    seat.position.y = 0.45
-    npc.add(seat)
 
-    // posisi: sisi berlawanan meja konseling, menghadap pemain
-    npc.position.set(cx - side * 1.3, 0, doorZ + 0.9)
-    npc.rotation.y = side < 0 ? -Math.PI / 3 : Math.PI / 3
-    npc.userData.head = head
+    // kursi kantor: dudukan + sandaran + tiang + kaki beroda
+    const seatCushion = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.09, 0.48), new THREE.MeshStandardMaterial({ color: 0x35404b, roughness: 0.85 }))
+    seatCushion.position.y = 0.47
+    const backrest = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.52, 0.08), seatCushion.material)
+    backrest.position.set(0, 0.75, -0.27)
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 10), metal)
+    post.position.y = 0.28
+    const baseStars = new THREE.Group()
+    for (let a = 0; a < 5; a++) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.03, 0.05), metal)
+      leg.position.set(Math.cos(a * Math.PI * 2 / 5) * 0.12, 0.06, Math.sin(a * Math.PI * 2 / 5) * 0.12)
+      leg.rotation.y = -a * Math.PI * 2 / 5
+      baseStars.add(leg)
+      const wheel = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), dark)
+      wheel.position.set(Math.cos(a * Math.PI * 2 / 5) * 0.22, 0.03, Math.sin(a * Math.PI * 2 / 5) * 0.22)
+      baseStars.add(wheel)
+    }
+    npc.add(seatCushion, backrest, post, baseStars)
+
+    // pinggul + paha terlipat (duduk menghadap meja)
+    const hips = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.14, 0.3), trouser)
+    hips.position.y = 0.56
+    npc.add(hips)
+    const thighL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.13, 0.42), trouser)
+    thighL.position.set(-0.1, 0.53, 0.22)
+    const thighR = thighL.clone()
+    thighR.position.x = 0.1
+    npc.add(thighL, thighR)
+    // betis + sepatu menggantung depan kursi
+    const mkShin = (x: number) => {
+      const shinMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.4, 4, 8), trouser)
+      shinMesh.position.set(x, 0.28, 0.38)
+      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.08, 0.26), dark)
+      shoe.position.set(x, 0.04, 0.42)
+      npc.add(shinMesh, shoe)
+    }
+    mkShin(-0.11)
+    mkShin(0.11)
+
+    // torso: dada melebar + perut menyempit, jas terbuka dengan kemeja + dasi
+    const torso = new THREE.Group()
+    const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.14, 0.52, 12), coat)
+    chest.position.y = 0.36
+    torso.add(chest)
+    const shirtV = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.4, 0.02), shirt)
+    shirtV.position.set(0, 0.4, 0.155)
+    torso.add(shirtV)
+    const tie = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.012), new THREE.MeshStandardMaterial({ color: 0x7a1f2b, roughness: 0.6 }))
+    tie.position.set(0, 0.42, 0.168)
+    torso.add(tie)
+    // krah jas di leher
+    const collarL = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.16, 0.03), coat)
+    collarL.position.set(-0.11, 0.6, 0.13)
+    collarL.rotation.x = 0.35
+    collarL.rotation.y = 0.25
+    const collarR = collarL.clone()
+    collarR.position.x = 0.11
+    collarR.rotation.y = -0.25
+    torso.add(collarL, collarR)
+
+    // kepala: tengkorak + rambut + telinga + wajah berfitur + kacamata bulat
+    const headG = new THREE.Group()
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.135, 18, 16), skin)
+    head.scale.set(1, 1.08, 0.96)
+    headG.add(head)
+    const hairTop = new THREE.Mesh(new THREE.SphereGeometry(0.14, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2.1), hair)
+    hairTop.position.y = 0.015
+    hairTop.scale.set(1.02, 1.05, 1)
+    headG.add(hairTop)
+    for (const ex of [-0.13, 0.13]) {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 8), skin)
+      ear.position.set(ex, 0.01, 0)
+      headG.add(ear)
+    }
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.024, 0.06, 8), skin)
+    nose.rotation.x = Math.PI / 2.2
+    nose.position.set(0, 0.01, 0.135)
+    headG.add(nose)
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.012, 0.01), dark)
+    mouth.position.set(0, -0.062, 0.125)
+    headG.add(mouth)
+    for (const ex of [-0.052, 0.052]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 10), new THREE.MeshStandardMaterial({ color: 0xf5f5f2, roughness: 0.3 }))
+      eye.position.set(ex, 0.032, 0.115)
+      eye.scale.set(1, 0.85, 0.6)
+      headG.add(eye)
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.011, 8, 8), dark)
+      pupil.position.set(ex, 0.032, 0.132)
+      headG.add(pupil)
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.011, 0.012), hair)
+      brow.position.set(ex, 0.075, 0.12)
+      headG.add(brow)
+      // kacamata bulat berkerangka logam
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.033, 0.005, 8, 16), metal)
+      rim.position.set(ex, 0.032, 0.128)
+      headG.add(rim)
+    }
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.006, 0.006), metal)
+    bridge.position.set(0, 0.038, 0.135)
+    headG.add(bridge)
+    for (const tx of [-0.085, 0.085]) {
+      const temple = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.008, 0.1), metal)
+      temple.position.set(tx, 0.04, -0.03)
+      headG.add(temple)
+    }
+    headG.position.y = 0.66
+    torso.add(headG)
+    torso.position.y = 0.62
+    npc.add(torso)
+
+    // lengan: lengan bawah rapi menyilang di pangkuan
+    const mkArm = (sx: number) => {
+      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.26, 4, 10), coat)
+      upper.rotation.z = sx * -1.15
+      upper.rotation.x = 0.5
+      upper.position.set(sx * 0.2, 1.0, 0.14)
+      const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.042, 0.24, 4, 10), coat)
+      fore.rotation.set(-1.15, 0, sx * 0.5)
+      fore.position.set(sx * 0.11, 0.82, 0.26)
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10), skin)
+      hand.scale.set(1, 0.8, 1.25)
+      hand.position.set(sx * 0.07, 0.74, 0.38)
+      npc.add(upper, fore, hand)
+    }
+    mkArm(-1)
+    mkArm(1)
+
+    npc.traverse((o) => {
+      if (o instanceof THREE.Mesh) { o.castShadow = true; o.receiveShadow = true }
+    })
+
+    // posisi: di balik meja konseling, wajah menghadap pemain/pintu (tak perlu menebak orientasi)
+    npc.position.set(cx + side * 1.2, 0, doorZ + 0.25)
+    npc.rotation.y = -side * (Math.PI / 2 - 0.2)
+    npc.userData.head = headG
     g.add(npc)
     this.npc = npc
     this.interactables.push({
-      mesh: torso,
+      mesh: chest,
       kind: 'prop',
       stationId,
       label: 'Penguji OSCE & Pasien Simulasi',
@@ -465,49 +583,124 @@ export class OsceEngine {
 
     const g = new THREE.Group()
 
-    // dinding & langit ruangan (mem-enclose interior)
-    const rWallMat = new THREE.MeshStandardMaterial({ color: 0xf5f2ec, roughness: 0.95 })
+    // dinding & langit ruangan (klinis dua-nada: cat atas + wainscot + plin)
     const depth = 5.2
     const farX = side * (WALL_X + depth)
+    const rWallMat = new THREE.MeshStandardMaterial({ color: 0xe3e7e0, roughness: 0.95 })
+    const wainscotMat = new THREE.MeshStandardMaterial({ color: 0x93ac9e, roughness: 0.9 })
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0xfaFBf7, roughness: 0.8 })
+    const skirtingMat = new THREE.MeshStandardMaterial({ color: 0x39434c, roughness: 0.85 })
+
     const far = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3.4, 4.5), rWallMat)
     far.position.set(farX + side * 0.1, 1.7, doorZ)
+    far.receiveShadow = true
     g.add(far)
     for (const sz of [-1, 1]) {
       const zw = new THREE.Mesh(new THREE.BoxGeometry(depth, 3.4, 0.2), rWallMat)
       zw.position.set(side * (WALL_X + depth / 2), 1.7, doorZ + sz * 2.25)
+      zw.receiveShadow = true
       g.add(zw)
+      // wainscot hijau muda klinik + lis putih + plin gelap di sisi dalam
+      const wain = new THREE.Mesh(new THREE.BoxGeometry(depth, 0.95, 0.05), wainscotMat)
+      wain.position.set(side * (WALL_X + depth / 2), 0.47, doorZ + sz * 2.14)
+      g.add(wain)
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(depth, 0.04, 0.07), trimMat)
+      trim.position.set(side * (WALL_X + depth / 2), 0.97, doorZ + sz * 2.14)
+      g.add(trim)
+      const skirt = new THREE.Mesh(new THREE.BoxGeometry(depth, 0.12, 0.06), skirtingMat)
+      skirt.position.set(side * (WALL_X + depth / 2), 0.06, doorZ + sz * 2.14)
+      g.add(skirt)
     }
+    // jendela berbingkai di dinding jauh + papan pemberitahuan berbingkai
+    const winFrameMat = new THREE.MeshStandardMaterial({ color: 0xf6f7f4, roughness: 0.7 })
+    const winX = farX - side * 0.14
+    const winZ = doorZ - 1.3
+    const pane = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.25, 1.1),
+      new THREE.MeshStandardMaterial({ color: 0xb9d6ec, emissive: 0xdcecff, emissiveIntensity: 0.75, roughness: 0.2 }),
+    )
+    pane.position.set(winX, 1.65, winZ)
+    pane.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2
+    g.add(pane)
+    const wf = (w: number, h: number, y: number, zOff: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.06, h, w), winFrameMat)
+      m.position.set(winX + side * 0.03, y, winZ + zOff)
+      g.add(m)
+    }
+    wf(1.45, 0.07, 2.24, 0) // atas
+    wf(1.45, 0.07, 1.06, 0) // bawah
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.1, 0.05), winFrameMat)
+    bar.position.set(winX + side * 0.03, 1.65, winZ)
+    g.add(bar)
+    // papan "ruang konseling" berbingkai di samping jendela
+    const signFrame = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.66, 0.5), new THREE.MeshStandardMaterial({ color: 0x50372a, roughness: 0.7 }))
+    signFrame.position.set(winX, 1.7, doorZ + 1.7)
+    g.add(signFrame)
+    const sign = this.panel(0.44, 0.6, makeTextTexture(
+      ['RUANG', 'KONSELING', '', 'Apoteker', 'Praktik Baik'],
+      { bg: '#f7f5ef', color: '#1f2d38', fontSize: 34, lineHeight: 42 },
+    ))
+    sign.position.set(winX - side * 0.04, 1.7, doorZ + 1.7)
+    sign.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2
+    g.add(sign)
+
+    // plafon + panel LED terbenam (sinkron titik cahaya)
     const roomCeil = new THREE.Mesh(
       new THREE.BoxGeometry(depth, 0.15, 4.5),
-      new THREE.MeshStandardMaterial({ color: 0xeef0f4 }),
+      new THREE.MeshStandardMaterial({ color: 0xd5d8dd, roughness: 0.95 }),
     )
     roomCeil.position.set(side * (WALL_X + depth / 2), 3.45, doorZ)
     g.add(roomCeil)
+    const ledMat = new THREE.MeshStandardMaterial({ color: 0xf6f9ff, emissive: 0xf2f7ff, emissiveIntensity: 1.5 })
+    for (const lz of [1.2, -1.2]) {
+      const led = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.65), ledMat)
+      led.position.set(side * (WALL_X + 2.6), 3.36, doorZ + lz)
+      g.add(led)
+    }
     for (let k = 1; k <= 2; k++) {
       const p = new THREE.PointLight(0xfff8ee, 6, 8, 2)
-      p.position.set(side * (WALL_X + 2.6), 3.1, doorZ + (k === 1 ? 1.2 : -1.2))
+      p.position.set(side * (WALL_X + 2.6), 3.05, doorZ + (k === 1 ? 1.2 : -1.2))
       g.add(p)
     }
+    // lampu sorot meja — sumber bayangan lembut interior
+    const spot = new THREE.SpotLight(0xfff2e2, 55, 7, Math.PI / 4.5, 0.45, 1.7)
+    spot.position.set(side * (WALL_X + 2.4), 3.25, doorZ + 0.5)
+    spot.castShadow = true
+    spot.shadow.mapSize.set(1024, 1024)
+    spot.shadow.bias = -0.0004
+    const spotTarget = new THREE.Object3D()
+    spotTarget.position.set(side * (WALL_X + 2.4), 0.8, doorZ + 0.5)
+    spot.target = spotTarget
+    g.add(spot, spotTarget)
 
+    // lantai vinil ubin klinik
+    const floorTex = this.tileTexture()
+    floorTex.repeat.set(10, 9)
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(5.2, 4.5),
-      new THREE.MeshStandardMaterial({ color: 0xe9e2d6, roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.42 }),
     )
     floor.rotation.x = -Math.PI / 2
-    floor.position.set(cx, 0.01, doorZ)
+    floor.position.set(cx, 0.012, doorZ)
+    floor.receiveShadow = true
     g.add(floor)
 
-    // meja konseling + monitor SIMRS
+    // ===== tata ruang: meja di tengah (long axis PAKAI z), penguji di balik meja
+    // menghadap pintu — pemain masuk langsung tatap muka, tanpa orientasi rancu =====
+    const deskX = cx + side * 0.5
     const table = new THREE.Mesh(
-      new THREE.BoxGeometry(1.7, 0.08, 0.8),
+      new THREE.BoxGeometry(0.85, 0.08, 1.75),
       new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.7 }),
     )
-    table.position.set(cx - side * 0.2, 0.75, doorZ + 0.4)
+    table.position.set(deskX, 0.75, doorZ)
+    table.castShadow = true
+    table.receiveShadow = true
     g.add(table)
     const legMat = new THREE.MeshStandardMaterial({ color: 0x5f3d22 })
-    for (const lx of [-0.72, 0.72]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.74, 0.7), legMat)
-      leg.position.set(table.position.x + side * lx, 0.37, table.position.z)
+    for (const lz of [-0.72, 0.72]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.74, 0.08), legMat)
+      leg.position.set(deskX, 0.37, doorZ + lz)
+      leg.castShadow = true
       g.add(leg)
     }
 
@@ -515,11 +708,12 @@ export class OsceEngine {
       ['SIMRS', 'e-Farmasi', '', 'Pasien: Tn. M (56th)', 'Diagnosa: DM tipe 2'],
       { bg: '#0f766e', color: '#ffffff', fontSize: 40, lineHeight: 52 },
     ))
-    monitor.position.set(cx + side * 0.45, 1.45, doorZ + 0.25)
-    monitor.rotation.y = side < 0 ? -Math.PI / 2.4 : Math.PI / 2.4
+    // layar di tepi belakang meja, menghadap pemain yang masuk (arah pintu)
+    monitor.position.set(deskX + side * 0.28, 1.5, doorZ - 0.55)
+    monitor.rotation.y = -side * (Math.PI / 2.6)
     g.add(monitor)
     const stand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.08), new THREE.MeshStandardMaterial({ color: 0x222222 }))
-    stand.position.set(monitor.position.x, 1.0, monitor.position.z)
+    stand.position.set(deskX + side * 0.28, 1.0, doorZ - 0.55)
     g.add(stand)
     this.interactables.push({
       mesh: monitor,
@@ -528,15 +722,15 @@ export class OsceEngine {
       label: 'Layar SIMRS e-Farmasi',
     })
 
-    // dokumen medis di meja
+    // dokumen medis di meja — terbentang menghadap pemain
     const tableDocs = st.documents.filter(d => d.type === 'prescription' || d.type === 'lab_result' || d.type === 'rubric_checklist')
     tableDocs.forEach((doc, i) => {
       const paper = this.panel(0.32, 0.46, makeTextTexture(
         [wrap(doc.title, 16), wrap2(doc.title, 16), '', '(E — baca)'],
         { fontSize: 26, lineHeight: 34, bg: '#fbfaf4' },
       ))
-      paper.rotation.set(-Math.PI / 2, 0, (side < 0 ? Math.PI : 0) + i * 0.25)
-      paper.position.set(cx + side * (i * 0.3), 0.793 + i * 0.004, doorZ + 0.15 + i * 0.2)
+      paper.rotation.set(-Math.PI / 2, 0, -side * 1.57 + i * 0.25)
+      paper.position.set(deskX - side * 0.18, 0.793 + i * 0.004, doorZ + 0.38 - i * 0.3)
       g.add(paper)
       this.interactables.push({
         mesh: paper,
@@ -547,15 +741,17 @@ export class OsceEngine {
       })
     })
 
-    // papan klip rubrik berdiri di meja
+    // papan klip rubrik di-sandarkan di atas meja (tend kertas, bukan panel melayang)
     if (st.documents.some(d => d.type === 'rubric_checklist')) {
       const rub = st.documents.find(d => d.type === 'rubric_checklist')!
       const board = this.panel(0.4, 0.55, makeTextTexture(
         ['Rubrik', `Station ${st.id}`, 'OSCE', '(E — isi)'],
         { fontSize: 34, lineHeight: 44, bg: '#eef2ff' },
       ))
-      board.position.set(cx + side * 0.9, 1.15, doorZ - 0.6)
-      board.rotation.y = side < 0 ? Math.PI / 3 : -Math.PI / 3
+      board.position.set(deskX + side * 0.22, 0.98, doorZ + 0.62)
+      board.rotation.order = 'YXZ'
+      board.rotation.y = -side * (Math.PI / 2 - 0.25)
+      board.rotation.x = -0.22
       g.add(board)
       this.interactables.push({ mesh: board, kind: 'rubric', stationId: st.id, label: `Checklist & Rubrik — Station ${st.id}`, doc: rub })
     }
@@ -564,22 +760,26 @@ export class OsceEngine {
     // (jawaban tidak boleh terungkap dari warna sebelum kandidat berinteraksi)
     for (const prop of st.props3D) {
       const box = makePropMesh(prop.label)
+      box.castShadow = true
       const label = this.panel(0.19, 0.1, makeTextTexture(
         prop.label.split(' ').slice(0, 3),
         { fontSize: 26, bg: '#f8fafc', color: '#334155' },
       ))
       label.position.set(0, 0.02, 0.17)
       box.add(label)
-      box.position.set(cx + side * prop.position[0], 0.83, doorZ + 0.9 + prop.position[2])
+      const px = Math.max(-0.3, Math.min(0.3, prop.position[0]))
+      const pz = Math.max(0.05, Math.min(0.8, prop.position[2] * 0.5 + 0.4))
+      box.position.set(deskX + side * px, 0.83, doorZ + pz)
       g.add(box)
       this.interactables.push({ mesh: box, kind: 'prop', stationId: st.id, label: prop.label, prop })
     }
 
-    // prop dasar prosedur + hotspot langkah (mekanik langkah 3D generik)
+    // prop dasar prosedur + hotspot langkah (mekanik langkah 3D generik) — meja samping
     if (st.procedure) {
       const base = makeProcedureBase(st.procedure.kind)
-      const bx = cx + side * 0.6
-      const bz = doorZ - 0.3
+      base.castShadow = true
+      const bx = cx + side * 2.3
+      const bz = doorZ - 1.1
       base.position.set(bx, 0.83, bz)
       g.add(base)
       for (const step of st.procedure.steps) {
@@ -781,7 +981,7 @@ export class OsceEngine {
     const now = performance.now()
     if (now - this.lastUnlockTime < 1300) return
     try {
-      const dom = (this.controls as any).domElement || this.renderer.domElement
+      const dom = (this.controls as unknown as { domElement?: HTMLElement }).domElement || this.renderer.domElement
       const p = dom?.requestPointerLock?.()
       if (p && typeof p.catch === 'function') {
         p.catch(() => {
@@ -920,7 +1120,7 @@ export class OsceEngine {
     }
     if (this.npc) {
       const t = this.clock.elapsedTime
-      const head = this.npc.userData.head as THREE.Mesh | undefined
+      const head = this.npc.userData.head as THREE.Object3D | undefined
       if (head) head.rotation.y = Math.sin(t * 0.7) * 0.18
       this.npc.rotation.z = Math.sin(t * 0.9) * 0.008 // "napas" halus
     }
